@@ -2,6 +2,8 @@
 #include "probability_model.h"
 #include <assert.h>
 
+//most of this range encoder/decoder stuff is borrowed from the LZMA reference code
+
 typedef struct {
 	uint64_t low;
 	uint32_t range;
@@ -151,6 +153,8 @@ bool tinysquish_compress(uint8_t* data, uint32_t data_size, WriteInterface* writ
 	}
 	range_encoder_encode_bit(1, 1, &enc, writer); //this is an extremely underhanded solution to the problem where the last bit is always wrong :<
 	range_encoder_flush_data(&enc, writer);
+
+	probability_model_free(model);
 	return true;
 }
 
@@ -171,5 +175,6 @@ bool tinysquish_decompress(ReadInterface* reader, WriteInterface* writer)
 		probability_model_insert_byte(model, byte);
 	}
 
+	probability_model_free(model);
 	return true;
 }

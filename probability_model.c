@@ -7,8 +7,10 @@ typedef struct {
 } HashTableEntry;
 
 struct ProbabilityModel_struct {
-	Prob probs[HISTORY_UNITS][NUM_SYMBOLS][TREE_PROBS];
+	Prob bernoulli_probs[TREE_PROBS];
+	Prob markov_probs[HISTORY_UNITS][NUM_SYMBOLS][TREE_PROBS];
 	uint8_t history[HISTORY_LEN];
+	size_t position;
 	HashTableEntry hash_table[HASH_SLOTS];
 };
 
@@ -20,11 +22,13 @@ ProbabilityModel* probability_model_new()
 	for (size_t i = 0; i < HISTORY_UNITS; i++) {
 		for (size_t j = 0; j < NUM_SYMBOLS; j++) {
 			for (size_t k = 0; k < TREE_PROBS; k++) {
-				model->probs[i][j][k] = PROB_INIT_VAL;
+				model->markov_probs[i][j][k] = PROB_INIT_VAL;
+				model->bernoulli_probs[k] = PROB_INIT_VAL;
 			}
 		}
 	}
 	memset(model->hash_table, 0, sizeof(HashTableEntry) * HASH_SLOTS);
+	model->position = 0;
 
 	return model;
 }
@@ -51,7 +55,10 @@ static uint32_t probability_model_history_hash(const ProbabilityModel* model)
 	return hash;
 }
 
-#include <stdio.h>
+static int min(int a, int b) {
+	return a < b ? a : b;
+}
+
 Prob probability_model_get(ProbabilityModel* model, int tree_index, int bit_index)
 {
 	int prob = 0;
@@ -59,9 +66,13 @@ Prob probability_model_get(ProbabilityModel* model, int tree_index, int bit_inde
 	for (int i = 0; i < HISTORY_UNITS; i++) {
 		int weight = (HISTORY_UNITS - i)*(HISTORY_UNITS - i);
 		sum += weight;
-		prob += model->probs[i][model->history[i]][tree_index]*weight;
+		prob += model->markov_probs[i][model->history[i]][tree_index]*weight;
 	}
 	prob /= sum;
+
+	//mix in the non-markov probabilities near the beginning
+	int bernoulli_weight = min(model->position/2, 0x100);
+	prob = (prob*bernoulli_weight + model->bernoulli_probs[tree_index]*16)/(bernoulli_weight+16);
 
 	uint32_t history_hash = probability_model_history_hash(model);
 	HashTableEntry* entry = &model->hash_table[history_hash % HASH_SLOTS];
@@ -69,13 +80,6 @@ Prob probability_model_get(ProbabilityModel* model, int tree_index, int bit_inde
 		uint8_t byte = entry->byte;
 		int byte_tree_index = (byte >> (bit_index+1)) | (1 << (6-bit_index));
 		if (byte_tree_index == tree_index) {
-			// {
-			// 	for (int i = 0; i < HISTORY_LEN; i++) {
-			// 		fprintf(stderr, "%c", model->history[HISTORY_LEN-i-1]);
-
-			// 	}
-			// 	fprintf(stderr, " %c\n", byte);
-			// }
 			bool bit = (byte >> bit_index) & 1;
 			Prob updated_prob = bit ? PROB_MIN : PROB_MAX;
 			prob = (prob + updated_prob*2)/(1+2);
@@ -94,8 +98,9 @@ static void update_prob(bool bit, Prob* prob)
 
 void probability_model_update(ProbabilityModel* model, int tree_index, bool bit)
 {
+	update_prob(bit, &model->bernoulli_probs[tree_index]);
 	for (int i = 0; i < HISTORY_UNITS; i++) {
-		update_prob(bit, &model->probs[i][model->history[i]][tree_index]);
+		update_prob(bit, &model->markov_probs[i][model->history[i]][tree_index]);
 	}
 }
 
@@ -110,4 +115,6 @@ void probability_model_insert_byte(ProbabilityModel* model, uint8_t byte)
 		model->history[HISTORY_LEN - i - 1] = model->history[HISTORY_LEN - i - 2];
 	}
 	model->history[0] = byte;
+
+	model->position++;
 }

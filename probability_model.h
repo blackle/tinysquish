@@ -12,6 +12,7 @@
 #define PROB_MAX ((1 << MODEL_BITS) - 1)
 #define PROB_INIT_VAL ((1 << MODEL_BITS) / 2)
 #define PROB_MIN 1
+
 typedef uint16_t Prob;
 
 typedef struct ProbabilityModel_struct ProbabilityModel;

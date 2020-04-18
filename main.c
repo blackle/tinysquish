@@ -48,6 +48,9 @@ int main(int argc, char** argv)
 	// ReadInterface* memory_reader_2 = memory_reader_from_writer(memory_writer_compressed);
 	// WriteInterface writer = { .write_size = noop_write_size, .write = stdout_write };
 	// assert(tinysquish_decompress(memory_reader_2, &writer));
+	memory_reader_free(memory_reader);
+	memory_writer_free(memory_writer_compressed);
+	memory_writer_free(memory_writer_decompressed);
 
 	return 0;
 }
