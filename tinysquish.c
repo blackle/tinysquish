@@ -113,8 +113,9 @@ bool decode_bit_tree(uint8_t* byte, ProbabilityModel* model, RangeDecoder* dec, 
 {
 	unsigned m = 1;
 	bool bit;
-	for (unsigned bit_index = 0; bit_index < 7; bit_index++) {
-		if (!range_decoder_decode_bit(&bit, probability_model_get(model, m), dec, reader)) return false;
+	for (unsigned bit_index = 7; bit_index != 0;) {
+		bit_index--;
+		if (!range_decoder_decode_bit(&bit, probability_model_get(model, m, bit_index), dec, reader)) return false;
 		probability_model_update(model, m, bit);
 		m = (m << 1) + bit;
 	}
@@ -129,7 +130,7 @@ bool encode_bit_tree(uint8_t byte, ProbabilityModel* model, RangeEncoder* enc, W
 	{
 		bit_index--;
 		int bit = (byte >> bit_index) & 1;
-		if (!range_encoder_encode_bit(bit, probability_model_get(model, m), enc, writer)) return false;
+		if (!range_encoder_encode_bit(bit, probability_model_get(model, m, bit_index), enc, writer)) return false;
 		probability_model_update(model, m, bit);
 		m = (m << 1) | bit;
 	}

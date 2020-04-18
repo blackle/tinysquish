@@ -1,9 +1,15 @@
 #include "probability_model.h"
 #include <string.h>
 
+typedef struct {
+	uint32_t hash;
+	uint8_t byte;
+} HashTableEntry;
+
 struct ProbabilityModel_struct {
 	Prob probs[HISTORY_UNITS][NUM_SYMBOLS][TREE_PROBS];
 	uint8_t history[HISTORY_LEN];
+	HashTableEntry hash_table[HASH_SLOTS];
 };
 
 ProbabilityModel* probability_model_new()
@@ -18,6 +24,7 @@ ProbabilityModel* probability_model_new()
 			}
 		}
 	}
+	memset(model->hash_table, 0, sizeof(HashTableEntry) * HASH_SLOTS);
 
 	return model;
 }
@@ -27,15 +34,25 @@ void probability_model_free(ProbabilityModel* model)
 	free(model);
 }
 
-// static void xorshift32(uint32_t *state, uint32_t entropy)
-// {
-// 	*state ^= entropy;
-// 	*state ^= *state << 13;
-// 	*state ^= *state >> 17;
-// 	*state ^= *state << 5;
-// }
+static void xorshift32(uint32_t *state, uint32_t entropy)
+{
+	*state ^= entropy;
+	*state ^= *state << 13;
+	*state ^= *state >> 17;
+	*state ^= *state << 5;
+}
 
-Prob probability_model_get(ProbabilityModel* model, int tree_index)
+static uint32_t probability_model_history_hash(const ProbabilityModel* model)
+{
+	uint32_t hash = 0;
+	for (int i = 0; i < HISTORY_LEN; i++) {
+		xorshift32(&hash, model->history[i]);
+	}
+	return hash;
+}
+
+#include <stdio.h>
+Prob probability_model_get(ProbabilityModel* model, int tree_index, int bit_index)
 {
 	int prob = 0;
 	int sum = 0;
@@ -44,7 +61,28 @@ Prob probability_model_get(ProbabilityModel* model, int tree_index)
 		sum += weight;
 		prob += model->probs[i][model->history[i]][tree_index]*weight;
 	}
-	return prob/sum;
+	prob /= sum;
+
+	uint32_t history_hash = probability_model_history_hash(model);
+	HashTableEntry* entry = &model->hash_table[history_hash % HASH_SLOTS];
+	if (entry->hash == history_hash) {
+		uint8_t byte = entry->byte;
+		int byte_tree_index = (byte >> (bit_index+1)) | (1 << (6-bit_index));
+		if (byte_tree_index == tree_index) {
+			// {
+			// 	for (int i = 0; i < HISTORY_LEN; i++) {
+			// 		fprintf(stderr, "%c", model->history[HISTORY_LEN-i-1]);
+
+			// 	}
+			// 	fprintf(stderr, " %c\n", byte);
+			// }
+			bool bit = (byte >> bit_index) & 1;
+			Prob updated_prob = bit ? PROB_MIN : PROB_MAX;
+			prob = (prob + updated_prob*2)/(1+2);
+		}
+	}
+
+	return prob;
 }
 
 #define NUM_MOVE_BITS 1
@@ -63,6 +101,11 @@ void probability_model_update(ProbabilityModel* model, int tree_index, bool bit)
 
 void probability_model_insert_byte(ProbabilityModel* model, uint8_t byte)
 {
+	uint32_t history_hash = probability_model_history_hash(model);
+	HashTableEntry* entry = &model->hash_table[history_hash % HASH_SLOTS];
+	entry->hash = history_hash;
+	entry->byte = byte;
+
 	for (int i = 0; i < HISTORY_LEN-1; i++) {
 		model->history[HISTORY_LEN - i - 1] = model->history[HISTORY_LEN - i - 2];
 	}
