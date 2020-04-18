@@ -55,24 +55,16 @@ static uint32_t probability_model_history_hash(const ProbabilityModel* model)
 	return hash;
 }
 
-static int min(int a, int b) {
-	return a < b ? a : b;
-}
-
 Prob probability_model_get(ProbabilityModel* model, int tree_index, int bit_index)
 {
-	int prob = 0;
-	int sum = 0;
+	int prob = model->bernoulli_probs[tree_index];
+	int sum = 1;
 	for (int i = 0; i < HISTORY_UNITS; i++) {
 		int weight = (HISTORY_UNITS - i)*(HISTORY_UNITS - i);
 		sum += weight;
 		prob += model->markov_probs[i][model->history[i]][tree_index]*weight;
 	}
 	prob /= sum;
-
-	//mix in the non-markov probabilities near the beginning
-	int bernoulli_weight = min(model->position/2, 0x100);
-	prob = (prob*bernoulli_weight + model->bernoulli_probs[tree_index]*16)/(bernoulli_weight+16);
 
 	uint32_t history_hash = probability_model_history_hash(model);
 	HashTableEntry* entry = &model->hash_table[history_hash % HASH_SLOTS];
