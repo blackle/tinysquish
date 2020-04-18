@@ -4,8 +4,8 @@
 #include <stdlib.h>
 
 #define MODEL_BITS 8
-#define HISTORY_UNITS 4
-#define HISTORY_LEN 4
+#define HISTORY_UNITS 3
+#define HISTORY_LEN 3
 #define HASH_SLOTS 16384 //number go up, size go down!
 #define NUM_SYMBOLS 0x100
 #define TREE_PROBS 0x80
