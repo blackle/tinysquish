@@ -12,6 +12,13 @@
 // 	return fread(byte, sizeof(uint8_t), 1, stdin) == 1;
 // }
 
+// static bool noop_write_size(uint32_t size, void* private_data)
+// {
+// 	(void) private_data;
+// 	(void) size;
+// 	return true;
+// }
+
 // static bool stdout_write(uint8_t byte, void* private_data)
 // {
 // 	(void) private_data;
@@ -37,6 +44,10 @@ int main(int argc, char** argv)
 	printf("input: %ld\noutput: %ld\n", data_len, memory_writer_length(memory_writer_compressed));
 
 	assert(memory_writer_compare(memory_writer_decompressed, (uint8_t*) data, data_len));
+
+	// ReadInterface* memory_reader_2 = memory_reader_from_writer(memory_writer_compressed);
+	// WriteInterface writer = { .write_size = noop_write_size, .write = stdout_write };
+	// assert(tinysquish_decompress(memory_reader_2, &writer));
 
 	return 0;
 }

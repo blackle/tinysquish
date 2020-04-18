@@ -1,20 +1,6 @@
 #include "tinysquish.h"
+#include "probability_model.h"
 #include <assert.h>
-
-#define NUM_BIT_MODEL_TOTAL_BITS 8
-#define PROB_INIT_VAL ((1 << NUM_BIT_MODEL_TOTAL_BITS) / 2)
-typedef uint8_t Prob;
-
-#define NUM_SYMBOLS 0x100
-#define TREE_PROBS 0x80
-static void init_tree_probs(Prob probs[NUM_SYMBOLS][TREE_PROBS])
-{
-	for (size_t i = 0; i < NUM_SYMBOLS; i++) {
-		for (size_t j = 0; j < TREE_PROBS; j++) {
-			probs[i][j] = PROB_INIT_VAL;
-		}
-	}
-}
 
 typedef struct {
 	uint64_t low;
@@ -60,7 +46,7 @@ static bool range_encoder_flush_data(RangeEncoder* enc, WriteInterface* writer)
 
 static bool range_encoder_encode_bit(bool bit, Prob prob, RangeEncoder* enc, WriteInterface* writer)
 {
-	uint32_t new_bound = (enc->range >> NUM_BIT_MODEL_TOTAL_BITS) * prob;
+	uint32_t new_bound = (enc->range >> MODEL_BITS) * prob;
 	if (bit) {
 		enc->low += new_bound;
 		enc->range -= new_bound;
@@ -72,45 +58,6 @@ static bool range_encoder_encode_bit(bool bit, Prob prob, RangeEncoder* enc, Wri
 		enc->range <<= 8;
 		if (!range_encoder_shift_low(enc, writer)) return false;
 	}
-	return true;
-}
-
-#define NUM_MOVE_BITS 2
-static void update_prob(bool bit, Prob* prob)
-{
-	if (bit) *prob -= *prob >> NUM_MOVE_BITS;
-	else *prob += ((1 << NUM_BIT_MODEL_TOTAL_BITS) - *prob) >> NUM_MOVE_BITS;
-}
-
-bool encode_bit_tree(uint8_t byte, Prob probs[TREE_PROBS], RangeEncoder* enc, WriteInterface* writer)
-{
-	unsigned m = 1;
-	for (unsigned bit_index = 7; bit_index != 0;)
-	{
-		bit_index--;
-		int bit = (byte >> bit_index) & 1;
-		if (!range_encoder_encode_bit(bit, probs[m], enc, writer)) return false;
-		update_prob(bit, &probs[m]);
-		m = (m << 1) | bit;
-	}
-	return true;
-}
-
-bool tinysquish_compress(uint8_t* data, uint32_t data_size, WriteInterface* writer)
-{
-	if (!interface_write_size(writer, data_size)) return false;
-
-	RangeEncoder enc = RANGE_ENCODER_INIT;
-	Prob probs[NUM_SYMBOLS][TREE_PROBS];
-	init_tree_probs(probs);
-
-	uint8_t last_byte = 0;
-	for (size_t i = 0; i < data_size; i++) {
-		if (!encode_bit_tree(data[i], probs[last_byte], &enc, writer)) return false;
-		last_byte = data[i];
-	}
-	range_encoder_encode_bit(1, 1, &enc, writer); //this is an extremely underhanded solution to the problem where the last bit is always wrong :<
-	range_encoder_flush_data(&enc, writer);
 	return true;
 }
 
@@ -151,7 +98,7 @@ bool range_decoder_normalize(RangeDecoder* dec, ReadInterface* reader)
 
 bool range_decoder_decode_bit(bool* bit, Prob prob, RangeDecoder* dec, ReadInterface* reader)
 {
-	uint32_t bound = (dec->range >> NUM_BIT_MODEL_TOTAL_BITS) * prob;
+	uint32_t bound = (dec->range >> MODEL_BITS) * prob;
 	*bit = dec->code > bound;
 	if (*bit) {
 		dec->code -= bound;
@@ -162,17 +109,48 @@ bool range_decoder_decode_bit(bool* bit, Prob prob, RangeDecoder* dec, ReadInter
 	return range_decoder_normalize(dec, reader);
 }
 
-bool decode_bit_tree(uint8_t* byte, Prob probs[TREE_PROBS], RangeDecoder* dec, ReadInterface* reader)
+bool decode_bit_tree(uint8_t* byte, ProbabilityModel* model, RangeDecoder* dec, ReadInterface* reader)
 {
 	unsigned m = 1;
 	bool bit;
 	for (unsigned bit_index = 0; bit_index < 7; bit_index++) {
-		if (!range_decoder_decode_bit(&bit, probs[m], dec, reader)) return false;
-		update_prob(bit, &probs[m]);
+		if (!range_decoder_decode_bit(&bit, probability_model_get(model, m), dec, reader)) return false;
+		probability_model_update(model, m, bit);
 		m = (m << 1) + bit;
 	}
-  *byte = m - TREE_PROBS;
+  *byte = (m - TREE_PROBS);
   return true;
+}
+
+bool encode_bit_tree(uint8_t byte, ProbabilityModel* model, RangeEncoder* enc, WriteInterface* writer)
+{
+	unsigned m = 1;
+	for (unsigned bit_index = 7; bit_index != 0;)
+	{
+		bit_index--;
+		int bit = (byte >> bit_index) & 1;
+		if (!range_encoder_encode_bit(bit, probability_model_get(model, m), enc, writer)) return false;
+		probability_model_update(model, m, bit);
+		m = (m << 1) | bit;
+	}
+	return true;
+}
+
+bool tinysquish_compress(uint8_t* data, uint32_t data_size, WriteInterface* writer)
+{
+	if (!interface_write_size(writer, data_size)) return false;
+
+	RangeEncoder enc = RANGE_ENCODER_INIT;
+
+	ProbabilityModel* model = probability_model_new();
+
+	for (size_t i = 0; i < data_size; i++) {
+		if (!encode_bit_tree(data[i], model, &enc, writer)) return false;
+		probability_model_insert_byte(model, data[i]);
+	}
+	range_encoder_encode_bit(1, 1, &enc, writer); //this is an extremely underhanded solution to the problem where the last bit is always wrong :<
+	range_encoder_flush_data(&enc, writer);
+	return true;
 }
 
 bool tinysquish_decompress(ReadInterface* reader, WriteInterface* writer)
@@ -183,14 +161,13 @@ bool tinysquish_decompress(ReadInterface* reader, WriteInterface* writer)
 	RangeDecoder dec = RANGE_DECODER_INIT;
 	if (!range_decoder_init(&dec, reader)) return false;
 
-	Prob probs[NUM_SYMBOLS][TREE_PROBS];
-	init_tree_probs(probs);
-	uint8_t last_byte = 0;
+	ProbabilityModel* model = probability_model_new();
+
 	for (size_t i = 0; i < data_size; i++) {
 		uint8_t byte = 0;
-		if (!decode_bit_tree(&byte, probs[last_byte], &dec, reader)) return false;
+		if (!decode_bit_tree(&byte, model, &dec, reader)) return false;
 		if (!interface_write(writer, byte)) return false;
-		last_byte = byte;
+		probability_model_insert_byte(model, byte);
 	}
 
 	return true;
