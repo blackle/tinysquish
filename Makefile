@@ -1,2 +1,6 @@
-main : main.c tinysquish.c tinysquish.h Makefile
-	gcc -o main main.c tinysquish.c -g -O0 -Wall -Werror -Wextra
+HEADERS := $(wildcard ./*.h)
+SOURCES := $(wildcard ./*.c)
+PROJECT := tinysquish
+
+$(PROJECT) : $(HEADERS) $(SOURCES) Makefile
+	gcc -o $(PROJECT) $(SOURCES) -lm -g -Wall -Werror -Wextra -O0 -flto

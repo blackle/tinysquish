@@ -1,36 +1,6 @@
 #include "tinysquish.h"
 #include <assert.h>
 
-static bool interface_read(ReadInterface* reader, uint8_t* byte)
-{
-	return (*reader->read)(byte, reader->private_data);
-}
-
-static bool interface_write(WriteInterface* writer, uint8_t byte)
-{
-	return (*writer->write)(byte, writer->private_data);
-}
-
-static bool write_uint32_t(WriteInterface* writer, uint32_t data_size)
-{
-	for (int i = 3; i >= 0; i--) {
-		if (!interface_write(writer, data_size >> 8*i & 0xFF)) return false;
-	}
-	return true;
-}
-
-static bool read_uint32_t(ReadInterface* reader, uint32_t* data_size)
-{
-	uint8_t in;
-	*data_size = 0;
-	for (int i = 0; i < 4; i++) {
-		*data_size <<= 8;
-		if (!interface_read(reader, &in)) return false;
-		*data_size += in;
-	}
-	return true;
-}
-
 #define NUM_BIT_MODEL_TOTAL_BITS 8
 #define PROB_INIT_VAL ((1 << NUM_BIT_MODEL_TOTAL_BITS) / 2)
 typedef uint8_t Prob;
@@ -128,7 +98,7 @@ bool encode_bit_tree(uint8_t byte, Prob probs[TREE_PROBS], RangeEncoder* enc, Wr
 
 bool tinysquish_compress(uint8_t* data, uint32_t data_size, WriteInterface* writer)
 {
-	if (!write_uint32_t(writer, data_size)) return false;
+	if (!interface_write_size(writer, data_size)) return false;
 
 	RangeEncoder enc = RANGE_ENCODER_INIT;
 	Prob probs[NUM_SYMBOLS][TREE_PROBS];
@@ -208,7 +178,7 @@ bool decode_bit_tree(uint8_t* byte, Prob probs[TREE_PROBS], RangeDecoder* dec, R
 bool tinysquish_decompress(ReadInterface* reader, WriteInterface* writer)
 {
 	uint32_t data_size;
-	if (!read_uint32_t(reader, &data_size)) return false;
+	if (!interface_read_size(reader, &data_size)) return false;
 
 	RangeDecoder dec = RANGE_DECODER_INIT;
 	if (!range_decoder_init(&dec, reader)) return false;
